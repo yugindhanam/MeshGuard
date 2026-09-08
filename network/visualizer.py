@@ -1,14 +1,14 @@
 """
-visualizer.py - Network Topology Visualizer
-Generates interactive PyVis HTML networks and high-resolution Matplotlib graphs
-with dynamic node/link status coloring and route highlighting.
+visualizer.py - Enhanced Network Topology Visualizer (Cyber NOC Edition)
+Generates high-tech interactive PyVis HTML networks and sleek dark-mode
+Matplotlib graphs with glowing status indicators, route highlights, and metric labels.
 """
 
 from typing import List, Optional, Tuple, Set
-import json
 import networkx as nx
 from pyvis.network import Network
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from network.manager import NetworkManager
 from network.topology import normalize_edge
 
@@ -25,51 +25,56 @@ def get_route_edges(path: Optional[List[str]]) -> Set[Tuple[str, str]]:
 def generate_pyvis_html(
     manager: NetworkManager,
     current_path: Optional[List[str]] = None,
-    height: str = "480px"
+    height: str = "500px"
 ) -> str:
     """
-    Constructs an interactive PyVis network graph.
-    - Active router: Green (#28a745)
-    - Failed router: Red (#dc3545)
-    - Active route nodes: Cyan/Blue (#007bff)
-    - Active link: Normal gray line (#adb5bd)
-    - Active route link: Bold blue highlight (#007bff, width=5)
-    - Failed link: Dashed red line (#dc3545, dashes=True)
+    Constructs an interactive PyVis network graph with a Cyber NOC dark aesthetic:
+    - Active router: Neon Emerald (#10b981)
+    - Failed router: Crimson Red (#f43f5e)
+    - Route router: Electric Cyan (#00e5ff)
+    - Active link: Deep Slate Blue (#475569)
+    - Route link: Glowing Electric Cyan (#00e5ff, width=6)
+    - Failed link: Dashed Crimson Laser (#f43f5e, dashes=True)
     """
-    net = Network(height=height, width="100%", bgcolor="#ffffff", font_color="#212529", notebook=False)
+    net = Network(
+        height=height,
+        width="100%",
+        bgcolor="#0b0f19",
+        font_color="#f8fafc",
+        notebook=False
+    )
     net.toggle_physics(False)
 
     route_nodes = set(current_path or [])
     route_edges = get_route_edges(current_path)
 
-    # Add Nodes
+    # Add Nodes with high-tech cyber styling
     for node in manager.base_graph.nodes:
         is_active = manager.is_node_active(node)
         is_on_route = node in route_nodes and is_active
 
         # Node coordinates from topology
-        x_pos = manager.base_graph.nodes[node].get("x", 0)
-        # Vis.js y-axis is inverted relative to standard cartesian
-        y_pos = -manager.base_graph.nodes[node].get("y", 0)
+        x_pos = manager.base_graph.nodes[node].get("x", 0) * 1.05
+        y_pos = -manager.base_graph.nodes[node].get("y", 0) * 1.1
 
         if not is_active:
-            bg_color = "#dc3545"  # Red
-            border_color = "#bd2130"
-            font_color = "#ffffff"
-            title = f"Router {node} [STATUS: FAILED]"
-            label = f"Router {node}\n(FAILED)"
+            bg_color = "#f43f5e"      # Neon Crimson
+            border_color = "#e11d48"
+            shadow_color = "rgba(244, 63, 94, 0.6)"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Router {node}</strong><br><span style='color:#f43f5e;'>STATUS: OFFLINE / FAILED</span></div>"
+            label = f"Router {node}\n[OFFLINE]"
         elif is_on_route:
-            bg_color = "#007bff"  # Blue route highlight
-            border_color = "#0056b3"
-            font_color = "#ffffff"
-            title = f"Router {node} [ON ACTIVE ROUTE]"
-            label = f"Router {node}\n(ROUTE)"
+            bg_color = "#00e5ff"      # Electric Cyan
+            border_color = "#38bdf8"
+            shadow_color = "rgba(0, 229, 255, 0.7)"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Router {node}</strong><br><span style='color:#00e5ff;'>STATUS: ON ACTIVE ROUTE</span></div>"
+            label = f"Router {node}\n[ROUTE]"
         else:
-            bg_color = "#28a745"  # Green
-            border_color = "#1e7e34"
-            font_color = "#ffffff"
-            title = f"Router {node} [STATUS: ACTIVE]"
-            label = f"Router {node}\n(ACTIVE)"
+            bg_color = "#10b981"      # Neon Emerald
+            border_color = "#34d399"
+            shadow_color = "rgba(16, 185, 129, 0.5)"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Router {node}</strong><br><span style='color:#10b981;'>STATUS: OPERATIONAL</span></div>"
+            label = f"Router {node}\n[ONLINE]"
 
         net.add_node(
             node,
@@ -78,18 +83,32 @@ def generate_pyvis_html(
             color={
                 "background": bg_color,
                 "border": border_color,
-                "highlight": {"background": bg_color, "border": "#000000"}
+                "highlight": {"background": "#ffffff", "border": bg_color}
             },
-            borderWidth=2,
-            size=26,
+            borderWidth=3,
+            size=28,
             shape="dot",
-            font={"color": font_color, "size": 13, "bold": True, "strokeWidth": 2, "strokeColor": "#000000"},
+            shadow={
+                "enabled": True,
+                "color": shadow_color,
+                "size": 15,
+                "x": 0,
+                "y": 0
+            },
+            font={
+                "color": "#ffffff",
+                "size": 13,
+                "face": "Inter, Segoe UI, sans-serif",
+                "bold": True,
+                "strokeWidth": 3,
+                "strokeColor": "#0b0f19"
+            },
             x=x_pos,
             y=y_pos,
             physics=False
         )
 
-    # Add Edges
+    # Add Edges with dynamic glow and dash effects
     for u, v, data in manager.base_graph.edges(data=True):
         edge_key = normalize_edge(u, v)
         weight = data.get("weight", 1)
@@ -99,24 +118,24 @@ def generate_pyvis_html(
         is_failed = (not link_active) or (not both_nodes_active)
         is_on_route = (edge_key in route_edges) and not is_failed
 
-        edge_label = f"c={weight}"
+        edge_label = f" cost: {weight} "
 
         if is_failed:
-            edge_color = "#dc3545"
+            edge_color = "#f43f5e"
             width = 3
-            dashes = [8, 8]  # Dashed line
-            status_desc = "FAILED LINK" if not link_active else "INACTIVE (Router Down)"
-            title = f"Link {u} <-> {v} [{status_desc}] | Cost: {weight}"
+            dashes = [8, 8]
+            status_desc = "LINK SEVERED" if not link_active else "DISABLED (Node Down)"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Link {u} <-> {v}</strong><br><span style='color:#f43f5e;'>{status_desc}</span><br>Cost: {weight}</div>"
         elif is_on_route:
-            edge_color = "#007bff"
-            width = 5
+            edge_color = "#00e5ff"
+            width = 6
             dashes = False
-            title = f"Active Route Link {u} <-> {v} | Cost: {weight}"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Active Route Link {u} <-> {v}</strong><br><span style='color:#00e5ff;'>TRAFFIC FLOWING</span><br>Cost: {weight}</div>"
         else:
-            edge_color = "#6c757d"
-            width = 2
+            edge_color = "#334155"
+            width = 2.5
             dashes = False
-            title = f"Active Link {u} <-> {v} | Cost: {weight}"
+            title = f"<div style='font-family:monospace;padding:4px;'><strong>Link {u} <-> {v}</strong><br>Operational<br>Cost: {weight}</div>"
 
         net.add_edge(
             u,
@@ -126,10 +145,17 @@ def generate_pyvis_html(
             color=edge_color,
             width=width,
             dashes=dashes,
-            font={"color": "#333333", "size": 12, "background": "#ffffff"}
+            font={
+                "color": "#94a3b8" if not is_on_route else "#00e5ff",
+                "size": 11,
+                "face": "monospace",
+                "background": "#0f172a",
+                "strokeWidth": 0
+            },
+            smooth={"type": "continuous"}
         )
 
-    # PyVis options for smooth display and interaction
+    # Enhanced options for dark cyber styling
     net.set_options("""
     var options = {
         "interaction": {
@@ -152,11 +178,11 @@ def generate_matplotlib_figure(
     current_path: Optional[List[str]] = None
 ) -> plt.Figure:
     """
-    Renders high quality Matplotlib graph of network topology for fallback or export.
+    Renders a matching high-tech dark theme Matplotlib figure.
     """
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=100)
-    fig.patch.set_facecolor("#f8f9fa")
-    ax.set_facecolor("#f8f9fa")
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+    fig.patch.set_facecolor("#0b0f19")
+    ax.set_facecolor("#0b0f19")
 
     # Positions dictionary
     pos = {
@@ -184,24 +210,25 @@ def generate_matplotlib_figure(
         else:
             active_edges.append((u, v))
 
-    # Draw normal active edges
-    nx.draw_networkx_edges(
-        manager.base_graph, pos, edgelist=active_edges,
-        edge_color="#6c757d", width=2.0, ax=ax
-    )
+    # 1. Base Active Edges
+    if active_edges:
+        nx.draw_networkx_edges(
+            manager.base_graph, pos, edgelist=active_edges,
+            edge_color="#334155", width=2.0, ax=ax
+        )
 
-    # Draw highlighted route edges
+    # 2. Highlighted Active Route Edges (with glowing width)
     if highlight_edges:
         nx.draw_networkx_edges(
             manager.base_graph, pos, edgelist=highlight_edges,
-            edge_color="#007bff", width=4.5, ax=ax
+            edge_color="#00e5ff", width=5.0, ax=ax
         )
 
-    # Draw failed edges
+    # 3. Failed Edges (Crimson Dashed)
     if failed_edges:
         nx.draw_networkx_edges(
             manager.base_graph, pos, edgelist=failed_edges,
-            edge_color="#dc3545", width=2.5, style="dashed", ax=ax
+            edge_color="#f43f5e", width=2.5, style="dashed", ax=ax
         )
 
     # Classify nodes
@@ -217,41 +244,44 @@ def generate_matplotlib_figure(
         else:
             active_nodes.append(node)
 
-    # Draw nodes
+    # Draw Nodes
     if active_nodes:
         nx.draw_networkx_nodes(
             manager.base_graph, pos, nodelist=active_nodes,
-            node_color="#28a745", node_size=750, edgecolors="#1e7e34", linewidths=2, ax=ax
+            node_color="#10b981", node_size=850, edgecolors="#34d399", linewidths=2.5, ax=ax
         )
     if route_node_list:
         nx.draw_networkx_nodes(
             manager.base_graph, pos, nodelist=route_node_list,
-            node_color="#007bff", node_size=850, edgecolors="#0056b3", linewidths=2.5, ax=ax
+            node_color="#00e5ff", node_size=950, edgecolors="#ffffff", linewidths=3.0, ax=ax
         )
     if failed_nodes:
         nx.draw_networkx_nodes(
             manager.base_graph, pos, nodelist=failed_nodes,
-            node_color="#dc3545", node_size=750, edgecolors="#bd2130", linewidths=2, ax=ax
+            node_color="#f43f5e", node_size=850, edgecolors="#fda4af", linewidths=2.5, ax=ax
         )
 
-    # Draw labels
+    # Router Node Labels
     labels = {n: n for n in manager.base_graph.nodes()}
     nx.draw_networkx_labels(
         manager.base_graph, pos, labels=labels,
-        font_size=11, font_color="#ffffff", font_weight="bold", ax=ax
+        font_size=11, font_color="#ffffff", font_weight="bold",
+        font_family="monospace", ax=ax
     )
 
-    # Edge weight labels
+    # Edge Weight Labels
     edge_labels = {
         (u, v): f"{manager.base_graph[u][v].get('weight', 1)}"
         for u, v in manager.base_graph.edges()
     }
     nx.draw_networkx_edge_labels(
         manager.base_graph, pos, edge_labels=edge_labels,
-        font_size=9, font_color="#343a40", ax=ax
+        font_size=9, font_color="#cbd5e1", font_family="monospace",
+        bbox=dict(boxstyle="round,pad=0.3", fc="#0f172a", ec="#334155", lw=1),
+        ax=ax
     )
 
-    ax.set_title("MeshGuard Network Topology", fontsize=14, fontweight="bold", pad=15)
+    ax.set_title("MeshGuard Topology – Live Telemetry Map", fontsize=13, fontweight="bold", color="#f8fafc", pad=14)
     ax.axis("off")
     fig.tight_layout()
     return fig

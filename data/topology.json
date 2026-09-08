@@ -1,0 +1,28 @@
+{
+  "routers": [
+    {"id": "A", "label": "Router A", "x": -350, "y": 80},
+    {"id": "B", "label": "Router B", "x": -150, "y": 140},
+    {"id": "C", "label": "Router C", "x": -220, "y": -120},
+    {"id": "D", "label": "Router D", "x": 100, "y": 140},
+    {"id": "E", "label": "Router E", "x": 40, "y": -100},
+    {"id": "F", "label": "Router F", "x": 280, "y": 100},
+    {"id": "G", "label": "Router G", "x": 220, "y": -120},
+    {"id": "H", "label": "Router H", "x": 420, "y": 0}
+  ],
+  "links": [
+    {"source": "A", "target": "B", "weight": 2},
+    {"source": "A", "target": "C", "weight": 4},
+    {"source": "B", "target": "C", "weight": 3},
+    {"source": "B", "target": "D", "weight": 3},
+    {"source": "C", "target": "D", "weight": 4},
+    {"source": "C", "target": "E", "weight": 3},
+    {"source": "D", "target": "E", "weight": 2},
+    {"source": "D", "target": "F", "weight": 3},
+    {"source": "E", "target": "F", "weight": 3},
+    {"source": "E", "target": "G", "weight": 2},
+    {"source": "F", "target": "H", "weight": 2},
+    {"source": "G", "target": "H", "weight": 4},
+    {"source": "D", "target": "H", "weight": 6}
+  ]
+}
+

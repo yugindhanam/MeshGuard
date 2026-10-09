@@ -142,8 +142,8 @@ def client_telemetry_table(clients_data: List[Dict[str, Any]]) -> None:
         f'<tr>'
         f'<th>Client</th>'
         f'<th>Current Communication Path</th>'
-        f'<th>Measured RTT</th>'
-        f'<th>Drift</th>'
+        f'<th>Dijkstra Metric Cost</th>'
+        f'<th>Hop Count</th>'
         f'<th>Node Status</th>'
         f'<th>Security Classification</th>'
         f'<th>Trust Score</th>'
@@ -157,19 +157,20 @@ def client_telemetry_table(clients_data: List[Dict[str, Any]]) -> None:
 
 
 def terminology_guide() -> None:
-    """Renders expandable help section with simple technical definitions."""
+    """Renders expandable help section with honest technical definitions."""
     with st.expander("📘 Technical Metrics & Networking Terms Guide", expanded=False):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("""
-            * **RTT (Round-Trip Time):** The total time in milliseconds taken for a request from a client to reach the destination Database (Router H) and return. Calculated dynamically from link metric weights.
-            * **Path:** The active sequence of intermediate routers traversed by packets from source to destination (e.g., `A → B → D → F → H`).
+            * **Dijkstra's Algorithm:** Calculates the lowest total metric weight path across the operational network subgraph.
+            * **Route Cost (Metric Weight):** The cumulative sum of link weights along the computed path (representing administrative link cost/bandwidth).
+            * **Hop Count:** Number of router-to-router forwarding steps (path node count minus 1).
             """)
         with c2:
             st.markdown("""
-            * **Drift:** The latency deviation measured compared against the optimal baseline path. Failover routes via alternate hops typically produce positive drift.
-            * **Self-Healing:** Autonomous capability to detect link severances or hardware crashes, recompute alternate loop-free shortest paths via Dijkstra's algorithm, and restore connectivity in milliseconds.
+            * **Autonomous Self-Healing:** Capability to automatically detect link severances or hardware crashes, recompute alternate loop-free shortest paths via Dijkstra, and restore connectivity in milliseconds.
             * **Trust Score:** Dynamic reputation metric (0–100). Valid requests maintain high trust; rogue or disconnected route proposals incur penalties.
+            * **Simulated Recovery Time:** Wall-clock duration in seconds measured during failure detection and Dijkstra recalculation.
             """)
 
 

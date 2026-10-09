@@ -51,6 +51,16 @@ export interface HealingEvent {
   message: string;
 }
 
+export interface IncidentData {
+  previous_path?: string[];
+  invalid_path?: string[];
+  classification?: string;
+  reasons?: string[];
+  blocked?: boolean;
+  safe_path?: string[] | null;
+  delivered?: boolean;
+}
+
 export interface ClientState {
   client_id: string;
   source: string;
@@ -62,7 +72,7 @@ export interface ClientState {
   blocked_requests: number;
   delivered: number;
   last_request: string;
-  last_incident: Record<string, unknown> | null;
+  last_incident: IncidentData | null;
   expected_route: string[] | null;
 }
 

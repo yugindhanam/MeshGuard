@@ -19,7 +19,7 @@ def format_route(path: Optional[List[str]]) -> str:
 
 
 def calculate_client_telemetry(monitor: SecurityMonitor, client: ClientState) -> Dict[str, Any]:
-    """Calculates real measured RTT, drift, and status from simulation graph metrics."""
+    """Calculates client route metrics honestly from graph topology without inventing physical RTT."""
     if client.route and len(client.route) > 1:
         graph = monitor.manager.base_graph
         cost = sum(
@@ -27,21 +27,20 @@ def calculate_client_telemetry(monitor: SecurityMonitor, client: ClientState) ->
             for u, v in zip(client.route, client.route[1:])
             if graph.has_edge(u, v)
         )
-        rtt_val = round(cost * 2.0, 1)  # 2.0 ms per link metric unit round trip
-        drift_val = round(rtt_val - 20.0, 1)  # 20.0 ms is optimal baseline cost 10
-        rtt_str = f"{rtt_val:.1f} ms"
-        drift_str = f"+{drift_val:.1f} ms (Detour)" if drift_val > 0 else "0.0 ms (Optimal)"
+        hops = len(client.route) - 1
+        cost_str = f"Cost: {cost}"
+        hops_str = f"{hops} Hops"
         node_status = "Online"
     else:
-        rtt_str = "Timeout (∞)"
-        drift_str = "N/A"
+        cost_str = "No Route (∞)"
+        hops_str = "N/A"
         node_status = "Isolated"
 
     return {
         "name": client.client_id,
         "path": format_route(client.route),
-        "rtt": rtt_str,
-        "drift": drift_str,
+        "rtt": cost_str,
+        "drift": hops_str,
         "status": node_status,
         "security": client.status,
         "trust_score": client.trust_score,

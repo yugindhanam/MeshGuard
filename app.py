@@ -1,13 +1,14 @@
 """
-app.py - MeshGuard: Self-Healing Computer Network Simulator
-Advanced Cyber NOC Edition - High-Tech Network Telemetry & Self-Healing Simulator
+app.py - MeshGuard: Secure Self-Healing Computer Network Simulator
+Advanced NOC Edition - High-Tech Network Telemetry, Self-Healing, and Route Security
 """
 
 import datetime
 import logging
 import os
+import re
 import time
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -21,15 +22,24 @@ from network.topology import normalize_edge
 from network.visualizer import generate_matplotlib_figure, generate_pyvis_html
 from routing.dijkstra import find_shortest_path
 from simulation.packet import PacketSimulator
+from security.monitor import SecurityMonitor
+from security.panel import render_security_monitor
+from ui.components import (
+    load_styles,
+    metric_card,
+    section_heading,
+    workflow_stepper,
+    viva_demo_guide,
+)
 
 # ---------------------------------------------------------
 # Page Configuration
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="MeshGuard – Self-Healing Computer Network Simulator",
+    page_title="MeshGuard – Secure Self-Healing Network Simulator",
     page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
 # ---------------------------------------------------------
@@ -40,7 +50,7 @@ logging.basicConfig(
     filename=LOG_FILE_PATH,
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("MeshGuard")
 
@@ -58,7 +68,71 @@ def log_event(message: str) -> None:
     logger.info(message)
 
 
-def init_session_state():
+def parse_log_entry(raw_entry: str) -> Dict[str, str]:
+    """Parses a raw log line into structured fields for audit table display."""
+    time_match = re.search(r"\[(\d{2}:\d{2}:\d{2})\]", raw_entry)
+    timestamp = time_match.group(1) if time_match else datetime.datetime.now().strftime("%H:%M:%S")
+    body = raw_entry.replace(f"[{timestamp}]", "").strip()
+
+    # Determine Severity
+    if "[SECURITY]" in body and any(k in body for k in ["MALICIOUS", "SUSPICIOUS", "blocked", "penalty", "Blocked"]):
+        severity = "SECURITY ALERT"
+    elif any(k in body for k in ["[FAIL]", "dropped", "down", "Partitioned", "partition", "critical", "Down"]):
+        severity = "ERROR"
+    elif any(k in body for k in ["[MONITOR]", "degraded", "compromised", "offline"]):
+        severity = "WARNING"
+    else:
+        severity = "INFO"
+
+    # Determine Affected Entity
+    if "Client 1" in body:
+        affected = "Client 1"
+    elif "Client 2" in body:
+        affected = "Client 2"
+    elif "Client 3" in body:
+        affected = "Client 3"
+    elif "Link " in body:
+        link_m = re.search(r"Link\s+([A-Za-z0-9_\-\s<>]+)", body)
+        affected = f"Link {link_m.group(1).strip()}" if link_m else "Network Link"
+    elif "Router " in body:
+        router_m = re.search(r"Router\s+([A-Za-z0-9_]+)", body)
+        affected = f"Router {router_m.group(1)}" if router_m else "Router Node"
+    else:
+        affected = "Mesh Network"
+
+    # Determine Action Taken
+    if "[HEAL]" in body or "recalculation" in body.lower():
+        action = "Autonomous Dijkstra Reroute"
+    elif "[ROUTE]" in body:
+        action = "Shortest Path Computation"
+    elif "[PACKET]" in body:
+        action = "Packet Forwarding"
+    elif "[FAIL]" in body:
+        action = "Element Failure Injected"
+    elif "[RESTORE]" in body:
+        action = "Element Restored to Service"
+    elif "[RESET]" in body:
+        action = "Full Topology Reset"
+    elif "blocked" in body.lower():
+        action = "Rogue Proposal Blocked"
+    elif "safe route found" in body.lower():
+        action = "Safe Route Re-established"
+    else:
+        action = "Telemetry Audit Log"
+
+    clean_body = re.sub(r"\[(SYS|ROUTE|PACKET|FAIL|HEAL|MONITOR|SECURITY|RESTORE|RESET)\]", "", body).strip()
+
+    return {
+        "timestamp": timestamp,
+        "severity": severity,
+        "affected": affected,
+        "event": clean_body,
+        "action": action,
+        "raw": raw_entry,
+    }
+
+
+def init_session_state() -> None:
     """Initializes Streamlit session state objects if not already set."""
     if "manager" not in st.session_state:
         st.session_state.manager = NetworkManager()
@@ -92,248 +166,17 @@ init_session_state()
 manager: NetworkManager = st.session_state.manager
 packet_sim: PacketSimulator = st.session_state.packet_sim
 
+if "security_monitor" not in st.session_state:
+    st.session_state.security_monitor = SecurityMonitor(manager, packet_sim, event_sink=log_event)
+
+security_monitor: SecurityMonitor = st.session_state.security_monitor
+security_monitor.event_sink = log_event
+security_monitor.refresh_routes()
+
 # ---------------------------------------------------------
 # Cyber NOC Design System CSS
 # ---------------------------------------------------------
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
-
-    /* Global Dark Theme Overrides */
-    .stApp {
-        background: radial-gradient(circle at 50% 0%, #131b2e 0%, #0b0f19 75%, #070a12 100%);
-        color: #f1f5f9;
-        font-family: 'Inter', -apple-system, sans-serif;
-    }
-
-    /* Top Navigation Header */
-    .noc-header-container {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        background: rgba(15, 23, 42, 0.75);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(56, 189, 248, 0.15);
-        border-radius: 14px;
-        padding: 16px 24px;
-        margin-bottom: 20px;
-        box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
-    }
-    .brand-title {
-        font-size: 1.85rem;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .brand-subtitle {
-        font-size: 0.85rem;
-        font-weight: 500;
-        color: #94a3b8;
-        letter-spacing: 0.2px;
-        margin-top: 2px;
-    }
-
-    /* Status Badges with Pulse */
-    .status-pill {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 18px;
-        border-radius: 9999px;
-        font-weight: 700;
-        font-size: 0.88rem;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-    }
-    .pill-healthy {
-        background: rgba(16, 185, 129, 0.15);
-        color: #10b981;
-        border: 1px solid rgba(16, 185, 129, 0.4);
-        box-shadow: 0 0 16px rgba(16, 185, 129, 0.25);
-    }
-    .pill-degraded {
-        background: rgba(245, 158, 11, 0.15);
-        color: #f59e0b;
-        border: 1px solid rgba(245, 158, 11, 0.4);
-        box-shadow: 0 0 16px rgba(245, 158, 11, 0.25);
-    }
-    .pill-disconnected {
-        background: rgba(239, 68, 68, 0.15);
-        color: #ef4444;
-        border: 1px solid rgba(239, 68, 68, 0.4);
-        box-shadow: 0 0 16px rgba(239, 68, 68, 0.35);
-    }
-
-    /* Live Beacon Indicator */
-    .pulse-dot {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        display: inline-block;
-        animation: pulseAnimation 1.8s infinite;
-    }
-    .dot-green { background: #10b981; box-shadow: 0 0 8px #10b981; }
-    .dot-amber { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
-    .dot-red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
-
-    @keyframes pulseAnimation {
-        0% { transform: scale(0.95); opacity: 0.8; }
-        50% { transform: scale(1.3); opacity: 1; }
-        100% { transform: scale(0.95); opacity: 0.8; }
-    }
-
-    /* Telemetry KPI Cards */
-    .kpi-card {
-        background: rgba(15, 23, 42, 0.7);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.4);
-        position: relative;
-        overflow: hidden;
-    }
-    .kpi-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 2px;
-        background: linear-gradient(90deg, #38bdf8, #818cf8);
-    }
-    .kpi-card-header {
-        font-size: 0.78rem;
-        font-weight: 600;
-        color: #94a3b8;
-        text-transform: uppercase;
-        letter-spacing: 0.8px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
-    }
-    .kpi-card-value {
-        font-size: 1.75rem;
-        font-weight: 800;
-        color: #f8fafc;
-        font-family: 'JetBrains Mono', monospace;
-    }
-    .kpi-card-sub {
-        font-size: 0.8rem;
-        color: #64748b;
-        margin-top: 4px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-
-    /* Glass Control Panel Box */
-    .control-card {
-        background: rgba(15, 23, 42, 0.65);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 14px;
-        padding: 20px;
-        margin-bottom: 18px;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-    }
-
-    /* Self-Healing Callout Banner */
-    .healing-banner-success {
-        background: linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(6, 95, 70, 0.18) 100%);
-        border: 1px solid rgba(16, 185, 129, 0.4);
-        border-left: 5px solid #10b981;
-        border-radius: 10px;
-        padding: 16px 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 8px 25px -5px rgba(16, 185, 129, 0.2);
-    }
-    .healing-banner-fail {
-        background: linear-gradient(135deg, rgba(239, 68, 68, 0.12) 0%, rgba(153, 27, 27, 0.18) 100%);
-        border: 1px solid rgba(239, 68, 68, 0.4);
-        border-left: 5px solid #ef4444;
-        border-radius: 10px;
-        padding: 16px 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 8px 25px -5px rgba(239, 68, 68, 0.2);
-    }
-
-    /* Active Route Breadcrumb Display */
-    .route-stepper-box {
-        background: rgba(11, 15, 25, 0.85);
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        border-radius: 10px;
-        padding: 14px 18px;
-        margin-top: 10px;
-        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
-    }
-    .route-node-pill {
-        display: inline-block;
-        background: #0284c7;
-        color: #ffffff;
-        font-family: 'JetBrains Mono', monospace;
-        font-weight: 700;
-        font-size: 0.88rem;
-        padding: 4px 12px;
-        border-radius: 6px;
-        box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);
-    }
-    .route-arrow {
-        color: #38bdf8;
-        font-weight: 700;
-        margin: 0 6px;
-    }
-
-    /* Terminal Console Window */
-    .terminal-window {
-        background: #080c14;
-        border: 1px solid rgba(56, 189, 248, 0.2);
-        border-radius: 10px;
-        overflow: hidden;
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
-    }
-    .terminal-titlebar {
-        background: #0f172a;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 8px 14px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .terminal-dot {
-        width: 11px;
-        height: 11px;
-        border-radius: 50%;
-        display: inline-block;
-    }
-    .t-red { background: #ff5f56; }
-    .t-yellow { background: #ffbd2e; }
-    .t-green { background: #27c93f; }
-    .terminal-text {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.82rem;
-        color: #94a3b8;
-        margin-left: 8px;
-    }
-    .terminal-body {
-        padding: 14px 18px;
-        height: 250px;
-        overflow-y: auto;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.82rem;
-        line-height: 1.6;
-        color: #38bdf8;
-        background: #080c14;
-    }
-</style>
-""", unsafe_allow_html=True)
-
+load_styles()
 
 # ---------------------------------------------------------
 # Evaluate Network Health
@@ -341,108 +184,202 @@ st.markdown("""
 health_info = FailureDetector.evaluate_network_health(
     manager,
     st.session_state.source_router,
-    st.session_state.dest_router
+    st.session_state.dest_router,
 )
 
-# ---------------------------------------------------------
-# Top Navigation Header Banner
-# ---------------------------------------------------------
 status_class = "pill-healthy"
-pulse_class = "dot-green"
 if health_info["status"] == FailureDetector.HEALTH_DEGRADED:
     status_class = "pill-degraded"
-    pulse_class = "dot-amber"
 elif health_info["status"] == FailureDetector.HEALTH_DISCONNECTED:
     status_class = "pill-disconnected"
-    pulse_class = "dot-red"
 
-st.markdown(f"""
-<div class='noc-header-container'>
-    <div>
-        <div class='brand-title'>
-            <span>🛡️ MeshGuard</span>
-            <span style='font-size:0.95rem; font-weight:600; color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:2px 8px; border-radius:6px;'>v2.0 NOC</span>
-        </div>
-        <div class='brand-subtitle'>Self-Healing Dynamic Routing Protocol & Network Fault Recovery Simulator</div>
-    </div>
-    <div style='display:flex; align-items:center; gap:16px;'>
-        <div class='status-pill {status_class}'>
-            <span class='pulse-dot {pulse_class}'></span>
-            {health_info['badge']}
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
+status_label = {
+    "pill-healthy": "NETWORK HEALTHY",
+    "pill-degraded": "NETWORK DEGRADED",
+    "pill-disconnected": "NETWORK DISCONNECTED",
+}[status_class]
 
 # ---------------------------------------------------------
-# Telemetry KPI Dashboard Cards
+# Section 3.A: Dashboard Header
+# ---------------------------------------------------------
+st.markdown(f"""
+<header class="app-masthead">
+    <div class="brand">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <path d="M12 3 21 6v6c0 5-9 9-9 9S3 17 3 12V6l9-3Z"/>
+            <path d="m7 12 3 3 7-7"/>
+        </svg>
+        <div>
+            MeshGuard
+            <small>Secure Self-Healing Network Simulator</small>
+        </div>
+    </div>
+    <nav class="app-nav" aria-label="Workspace sections">
+        <a href="#topology-workspace" target="_self">Topology & Telemetry</a>
+        <a href="#failure-workspace" target="_self">Failure Testing</a>
+        <a href="#security-workspace" target="_self">Security Testing</a>
+        <a href="#logs-workspace" target="_self">Event Logs</a>
+    </nav>
+</header>
+<section class="workspace-hero">
+    <div>
+        <div class="eyebrow">CONTROL CENTER / NETWORK OPERATIONS CENTER</div>
+        <h1>MeshGuard</h1>
+        <p style="color:#38bdf8; font-weight:600; margin-bottom:4px; font-size:15px;">Secure Self-Healing Network Simulator</p>
+        <p>Monitor network health, detect failures, identify unauthorized routes, and automatically recover network connectivity.</p>
+    </div>
+    <div class="hero-meta">
+        <span class="status-pill {status_class}"><span class="pulse-dot"></span>{status_label}</span>
+        <small>8-Router Mesh &nbsp; · &nbsp; Dijkstra Dynamic Routing &nbsp; · &nbsp; Request Gate</small>
+    </div>
+</section>
+""", unsafe_allow_html=True)
+
+# Expandable Viva & Demo Walkthrough Guide (Section 10)
+viva_demo_guide()
+
+# ---------------------------------------------------------
+# Section 3.B: Network Summary Cards
 # ---------------------------------------------------------
 net_stats = manager.get_statistics()
 pkt_stats = packet_sim.get_stats()
-rec_time_str = f"{st.session_state.last_recovery_time:.3f} s" if st.session_state.last_recovery_time is not None else "0.000 s"
+rec_time_str = (
+    f"{st.session_state.last_recovery_time:.3f} s"
+    if st.session_state.last_recovery_time is not None
+    else "No recovery yet"
+)
 
-delivery_rate = 100.0
-if pkt_stats["packets_sent"] > 0:
-    delivery_rate = round((pkt_stats["packets_delivered"] / pkt_stats["packets_sent"]) * 100, 1)
+# Real Simulation Metrics
+total_clients = len(security_monitor.clients)
+active_routers_val = f"{net_stats['active_routers']} / {net_stats['total_routers']}"
+net_health_val = (
+    "HEALTHY" if health_info["status"] == FailureDetector.HEALTH_HEALTHY
+    else "DEGRADED" if health_info["status"] == FailureDetector.HEALTH_DEGRADED
+    else "DISCONNECTED"
+)
+health_tone = "green" if net_health_val == "HEALTHY" else "amber" if net_health_val == "DEGRADED" else "red"
 
-kpi_c1, kpi_c2, kpi_c3 = st.columns(3, gap="medium")
+# Count active alerts (failed nodes + failed links + client security flags)
+suspicious_or_malicious_clients = sum(
+    1 for c in security_monitor.clients.values() if c.status in ("MALICIOUS", "SUSPICIOUS")
+)
+active_alerts_count = net_stats["failed_routers"] + net_stats["failed_links"] + suspicious_or_malicious_clients
 
-with kpi_c1:
-    router_status_color = "#10b981" if net_stats["failed_routers"] == 0 else "#f43f5e"
-    st.markdown(f"""
-    <div class='kpi-card'>
-        <div class='kpi-card-header'>
-            <span>🖥️ Router Infrastructure</span>
-            <span style='color:{router_status_color}; font-weight:700;'>{net_stats["active_routers"]}/{net_stats["total_routers"]} ONLINE</span>
-        </div>
-        <div class='kpi-card-value'>
-            {net_stats["active_routers"]} <span style='font-size:1rem; color:#64748b; font-weight:500;'>/ {net_stats["total_routers"]} Active</span>
-        </div>
-        <div class='kpi-card-sub'>
-            <span>🔴 Failed Routers: <strong style='color:{router_status_color};'>{net_stats["failed_routers"]}</strong></span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+# Dynamic Current Network Status text
+has_malicious = any(c.status == "MALICIOUS" for c in security_monitor.clients.values())
+if has_malicious:
+    current_status_text = "Rogue Route Blocked"
+    status_tone = "red"
+elif health_info["status"] == FailureDetector.HEALTH_DISCONNECTED:
+    current_status_text = "Network Partitioned"
+    status_tone = "red"
+elif health_info["status"] == FailureDetector.HEALTH_DEGRADED:
+    current_status_text = "Operating via Failover"
+    status_tone = "amber"
+else:
+    current_status_text = "All Systems Normal"
+    status_tone = "green"
 
-with kpi_c2:
-    link_status_color = "#10b981" if net_stats["failed_links"] == 0 else "#f43f5e"
-    st.markdown(f"""
-    <div class='kpi-card'>
-        <div class='kpi-card-header'>
-            <span>🔗 Mesh Link Adjacency</span>
-            <span style='color:{link_status_color}; font-weight:700;'>{net_stats["active_links"]}/{net_stats["total_links"]} ACTIVE</span>
-        </div>
-        <div class='kpi-card-value'>
-            {net_stats["active_links"]} <span style='font-size:1rem; color:#64748b; font-weight:500;'>/ {net_stats["total_links"]} Links</span>
-        </div>
-        <div class='kpi-card-sub'>
-            <span>⚡ Severed Links: <strong style='color:{link_status_color};'>{net_stats["failed_links"]}</strong></span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+# Render 5 Summary Metric Cards
+m_cols = st.columns(5, gap="medium")
+with m_cols[0]:
+    metric_card(
+        "Total Clients",
+        f"{total_clients} Active",
+        "Simulated Endpoints (1-3)",
+        "cyan"
+    )
+with m_cols[1]:
+    metric_card(
+        "Active Routers",
+        active_routers_val,
+        f"{net_stats['failed_routers']} offline routers",
+        "green" if not net_stats['failed_routers'] else "red"
+    )
+with m_cols[2]:
+    metric_card(
+        "Network Health",
+        net_health_val,
+        health_info["reason"],
+        health_tone
+    )
+with m_cols[3]:
+    metric_card(
+        "Active Alerts",
+        str(active_alerts_count),
+        f"{suspicious_or_malicious_clients} security flags",
+        "green" if active_alerts_count == 0 else "red"
+    )
+with m_cols[4]:
+    metric_card(
+        "Current Network Status",
+        current_status_text,
+        f"Convergence: {rec_time_str}",
+        status_tone
+    )
 
-with kpi_c3:
-    st.markdown(f"""
-    <div class='kpi-card'>
-        <div class='kpi-card-header'>
-            <span>📦 Telemetry & Convergence</span>
-            <span style='color:#38bdf8; font-weight:700;'>{delivery_rate}% RELIABILITY</span>
-        </div>
-        <div class='kpi-card-value'>
-            {pkt_stats["packets_delivered"]} <span style='font-size:1rem; color:#64748b; font-weight:500;'>pkts ({pkt_stats["packets_lost"]} lost)</span>
-        </div>
-        <div class='kpi-card-sub'>
-            <span>⚡ Last Recovery Latency: <strong style='color:#38bdf8;'>{rec_time_str}</strong></span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-st.write("")
+# Secondary Telemetry Line
+delivery_rate = (
+    f"{pkt_stats['packets_delivered'] / pkt_stats['packets_sent']:.0%}"
+    if pkt_stats['packets_sent']
+    else "N/A"
+)
+st.caption(
+    f"Operational Links: {manager.get_active_graph().number_of_edges()} / {net_stats['total_links']} active · "
+    f"Packet Reliability: {delivery_rate} ({pkt_stats['packets_delivered']} delivered, {pkt_stats['packets_lost']} lost) · "
+    f"Last Convergence Latency: {rec_time_str}"
+)
 
 # ---------------------------------------------------------
-# Self-Healing Incident Notification Banner
+# Section 6: Visual Workflow Panel (Monitor → Detect → Validate → Block → Reroute → Recover)
 # ---------------------------------------------------------
+# Determine current state dynamically based on simulation conditions
 healing_event = st.session_state.last_healing_event
+client_under_attack = any(c.status in ("MALICIOUS", "SUSPICIOUS") for c in security_monitor.clients.values())
+isolated_client = any(c.status == "ISOLATED" for c in security_monitor.clients.values())
+
+if client_under_attack:
+    workflow_cur_step = "Recover"
+    workflow_msg = "An unauthorized route was attempted. Invalid route rejected & blocked before forwarding. Valid route restored via Dijkstra."
+    is_step_blocked = False
+elif isolated_client:
+    workflow_cur_step = "Block"
+    workflow_msg = "Invalid route rejected. Destination unreachable on active topology — client isolated."
+    is_step_blocked = True
+elif healing_event and healing_event["status"] == "RECOVERED":
+    workflow_cur_step = "Recover"
+    workflow_msg = f"{healing_event['failure_type']} failure detected on active path. Calculating alternative path using Dijkstra. Valid route restored successfully."
+    is_step_blocked = False
+elif healing_event and healing_event["status"] == "FAILED_NO_PATH":
+    workflow_cur_step = "Detect"
+    workflow_msg = f"Critical {healing_event['failure_type']} failure detected. All redundant paths severed — network partitioned."
+    is_step_blocked = True
+elif health_info["status"] == FailureDetector.HEALTH_DEGRADED:
+    workflow_cur_step = "Recover"
+    workflow_msg = "Network operating in degraded state. Alternative loop-free path operational."
+    is_step_blocked = False
+elif health_info["status"] == FailureDetector.HEALTH_DISCONNECTED:
+    workflow_cur_step = "Detect"
+    workflow_msg = "Router or link failure detected. Destination unreachable from source."
+    is_step_blocked = True
+else:
+    workflow_cur_step = "Monitor"
+    workflow_msg = "Network operating normally. Continuous heartbeat telemetry active across all 8 routers."
+    is_step_blocked = False
+
+workflow_stepper(workflow_cur_step, workflow_msg, is_blocked=is_step_blocked)
+
+# ---------------------------------------------------------
+# Section 3.C: Network Topology (Main Visual Focus)
+# ---------------------------------------------------------
+section_heading(
+    "topology-workspace",
+    "01",
+    "Network Topology & Real-Time Telemetry Map",
+    "Main visual focus: Monitor operational routers, communication paths, severed links, and blocked rogue routes."
+)
+
+# Self-Healing Incident Notification Banner
 if healing_event:
     if healing_event["status"] == "RECOVERED":
         orig_nodes = " → ".join(healing_event["original_path"]) if healing_event["original_path"] else "None"
@@ -479,348 +416,522 @@ if healing_event:
         </div>
         """, unsafe_allow_html=True)
 
-# ---------------------------------------------------------
-# Main Two-Column Layout
-# ---------------------------------------------------------
-left_col, right_col = st.columns([1.35, 1.0], gap="large")
+# Visualizer Controls Header
+v_head1, v_head2, v_head3 = st.columns([1.5, 1.2, 1.0])
+with v_head1:
+    st.markdown('<div class="panel-title">🌐 Live Network Graph View</div>', unsafe_allow_html=True)
+with v_head2:
+    view_scope = st.radio(
+        "Graph Scope",
+        ["Full Architecture (Clients & Database)", "Core Router Mesh (A–H)"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+with v_head3:
+    viz_mode = st.selectbox(
+        "Render Engine",
+        options=["Interactive PyVis (WebGL)", "Static Telemetry Map"],
+        label_visibility="collapsed"
+    )
 
-# =========================================================
-# LEFT COLUMN: Network Visualization & Route Details
-# =========================================================
-with left_col:
-    v_head1, v_head2 = st.columns([2, 1])
-    with v_head1:
-        st.markdown("<h4 style='margin:0; color:#f8fafc;'>🌐 Live Mesh Topology Canvas</h4>", unsafe_allow_html=True)
-    with v_head2:
-        viz_mode = st.selectbox(
-            "Render Engine",
-            options=["Interactive PyVis (WebGL)", "Static Telemetry Map"],
-            label_visibility="collapsed"
-        )
+# Consistent Color Legend
+st.markdown("""
+<div class="legend">
+    <span><span style="color:#10b981;">●</span> Online Router / Client</span>
+    <span><span style="color:#f43f5e;">●</span> Offline Router / Blocked Node</span>
+    <span><span style="color:#f59e0b;">●</span> Suspicious Activity</span>
+    <span><span style="color:#00e5ff;">●</span> Active Route Node</span>
+    <span><span style="color:#a855f7;">●</span> Destination Database (H)</span>
+    <span><span style="color:#00e5ff; font-weight:bold;">━━</span> Active Route</span>
+    <span><span style="color:#f43f5e; font-weight:bold;">┈┈</span> Severed / Blocked Link</span>
+    <span><span style="color:#334155;">━━</span> Operational Link</span>
+</div>
+""", unsafe_allow_html=True)
 
-    # Topology Status Legend
+# Build Graph visualization inputs
+# If Full Architecture is selected, include Clients and Database H
+if "Full Architecture" in view_scope:
+    selected_client_key = st.session_state.get("security_client", "Client 2")
+    current_sec_client = security_monitor.clients.get(selected_client_key)
+    blocked_overlay = (
+        current_sec_client.last_incident.get("invalid_path")
+        if current_sec_client and current_sec_client.last_incident
+        else None
+    )
+    graph_clients = list(security_monitor.clients.values())
+    active_display_path = st.session_state.current_route or (current_sec_client.route if current_sec_client else None)
+else:
+    graph_clients = None
+    blocked_overlay = None
+    active_display_path = st.session_state.current_route
+
+# Render Graph
+if viz_mode == "Interactive PyVis (WebGL)":
+    html_content = generate_pyvis_html(
+        manager,
+        active_display_path,
+        height="500px",
+        clients=graph_clients,
+        blocked_path=blocked_overlay,
+    )
+    components.html(html_content, height=510, scrolling=False)
+else:
+    fig = generate_matplotlib_figure(
+        manager,
+        active_display_path,
+        clients=graph_clients,
+        blocked_path=blocked_overlay,
+    )
+    st.pyplot(fig)
+    plt.close(fig)
+
+# Active Route Stepper Pill Sequence
+if active_display_path:
+    pills_html = ""
+    for idx, node in enumerate(active_display_path):
+        node_label = f"Database ({node})" if node == "H" else f"Router {node}"
+        pills_html += f"<span class='route-node-pill'>{node_label}</span>"
+        if idx < len(active_display_path) - 1:
+            pills_html += "<span class='route-arrow'>──►</span>"
+
+    cost_display = st.session_state.current_cost if st.session_state.current_cost is not None else "Active"
+    st.markdown(f"""
+    <div class='route-stepper-box'>
+        <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>
+            <span style='font-size:0.82rem; font-weight:700; color:#94a3b8; text-transform:uppercase;'>Active Verified Route:</span>
+            <span style='font-family:monospace; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.15); border:1px solid rgba(56,189,248,0.3); padding:2px 10px; border-radius:6px; font-size:0.82rem;'>
+                Total Dijkstra Metric Cost: {cost_display} | Hops: {len(active_display_path) - 1}
+            </span>
+        </div>
+        <div>{pills_html}</div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
     st.markdown("""
-    <div style='display:flex; gap:16px; font-size:0.8rem; color:#94a3b8; background:rgba(15,23,42,0.5); padding:8px 14px; border-radius:8px; margin:8px 0 12px 0; border:1px solid rgba(255,255,255,0.06);'>
-        <span><span style='color:#10b981;'>●</span> Online Router</span>
-        <span><span style='color:#f43f5e;'>●</span> Offline Router</span>
-        <span><span style='color:#00e5ff;'>●</span> Route Node</span>
-        <span><span style='color:#00e5ff;'>━━</span> Active Route</span>
-        <span><span style='color:#f43f5e;'>┈</span> Severed Link</span>
+    <div class='route-stepper-box' style='text-align:center; padding:16px; color:#64748b;'>
+        <span>💡 Select routers in <strong>Network Failure Testing</strong> or trigger client requests in <strong>Security Testing</strong> to view active routing paths.</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # Render Visualizer
-    if viz_mode == "Interactive PyVis (WebGL)":
-        html_content = generate_pyvis_html(manager, st.session_state.current_route, height="490px")
-        components.html(html_content, height=500, scrolling=False)
-    else:
-        fig = generate_matplotlib_figure(manager, st.session_state.current_route)
-        st.pyplot(fig)
-        plt.close(fig)
+# ---------------------------------------------------------
+# Section 7: Separate Network Failure and Security Testing Workspaces
+# ---------------------------------------------------------
+st.write("")
+st.markdown("<hr style='border-color:rgba(30,44,64,0.7); margin:18px 0 24px 0;'>", unsafe_allow_html=True)
 
-    # Active Route Stepper & Cost Pill
-    if st.session_state.current_route:
-        route_nodes = st.session_state.current_route
-        pills_html = ""
-        for idx, node in enumerate(route_nodes):
-            pills_html += f"<span class='route-node-pill'>Router {node}</span>"
-            if idx < len(route_nodes) - 1:
-                pills_html += "<span class='route-arrow'>──►</span>"
-
-        st.markdown(f"""
-        <div class='route-stepper-box'>
-            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;'>
-                <span style='font-size:0.82rem; font-weight:700; color:#94a3b8; text-transform:uppercase;'>Active Routing Path:</span>
-                <span style='font-family:monospace; font-weight:700; color:#38bdf8; background:rgba(56,189,248,0.15); border:1px solid rgba(56,189,248,0.3); padding:2px 10px; border-radius:6px; font-size:0.82rem;'>
-                    Total Metric Cost: {st.session_state.current_cost} | Hops: {len(route_nodes) - 1}
-                </span>
-            </div>
-            <div>{pills_html}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div class='route-stepper-box' style='text-align:center; padding:18px; color:#64748b;'>
-            <span>💡 Select a Source and Destination router on the right, then click <strong>Calculate Optimal Route</strong>.</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Packet Transmission Feed
-    if st.session_state.packet_logs:
-        st.markdown("<h5 style='color:#e2e8f0; margin-top:16px; margin-bottom:8px;'>📦 Virtual Packet Telemetry Flow</h5>", unsafe_allow_html=True)
-        pkt_box_html = ""
-        for plog in st.session_state.packet_logs:
-            if "[OK]" in plog:
-                pkt_box_html += f"<div style='color:#10b981; font-weight:600;'>{plog}</div>"
-            elif "[FAIL]" in plog or "dropped" in plog:
-                pkt_box_html += f"<div style='color:#f43f5e; font-weight:600;'>{plog}</div>"
-            else:
-                pkt_box_html += f"<div style='color:#38bdf8;'>{plog}</div>"
-        st.markdown(f"<div style='background:#080c14; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px 16px; font-family:monospace; font-size:0.82rem; line-height:1.5;'>{pkt_box_html}</div>", unsafe_allow_html=True)
-
+test_tab1, test_tab2 = st.tabs([
+    "⚡ Network Failure Testing (Self-Healing)",
+    "🛡️ Security Testing — Simulate a Malicious Client"
+])
 
 # =========================================================
-# RIGHT COLUMN: Command & Control Center
+# TAB 1: Network Failure Testing
+# Demonstrates: Failure → Detection → Dijkstra → Alternative Route → Recovery
 # =========================================================
-with right_col:
-    st.markdown("<h4 style='margin:0; color:#f8fafc; margin-bottom:12px;'>🎮 NOC Command & Control</h4>", unsafe_allow_html=True)
+with test_tab1:
+    section_heading(
+        "failure-workspace",
+        "02A",
+        "Network Failure Testing & Fault Resilience",
+        "Demonstrate router and link failure injection, automated detection, Dijkstra shortest-path recalculation, and self-healing."
+    )
 
-    main_tabs = st.tabs(["🧭 Routing & Flow", "⚡ Failure Injection", "🔧 Recovery & Reset"])
+    fail_col_left, fail_col_right = st.columns([1.3, 1.0], gap="large")
 
-    # -----------------------------------------------------
-    # TAB 1: Routing & Flow
-    # -----------------------------------------------------
-    with main_tabs[0]:
-        st.markdown("<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>Compute dynamic shortest paths using Dijkstra's algorithm and simulate packet delivery.</div>", unsafe_allow_html=True)
+    with fail_col_left:
+        st.markdown('<div class="panel-title">🎛️ Command & Control Studio</div>', unsafe_allow_html=True)
+        fail_subtabs = st.tabs(["Routing & Flow", "Failure Injection", "Recovery & Reset"])
 
-        all_routers = sorted(list(manager.base_graph.nodes))
-        r_c1, r_c2 = st.columns(2)
-        with r_c1:
-            source_idx = all_routers.index(st.session_state.source_router) if st.session_state.source_router in all_routers else 0
-            source_sel = st.selectbox("Source Router", options=all_routers, index=source_idx)
-            st.session_state.source_router = source_sel
+        # -----------------------------------------------------
+        # SUBTAB 1: Routing & Flow
+        # -----------------------------------------------------
+        with fail_subtabs[0]:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>"
+                "Compute dynamic shortest paths using Dijkstra's algorithm and simulate packet delivery.</div>",
+                unsafe_allow_html=True,
+            )
 
-        with r_c2:
-            dest_idx = all_routers.index(st.session_state.dest_router) if st.session_state.dest_router in all_routers else len(all_routers) - 1
-            dest_sel = st.selectbox("Destination Router", options=all_routers, index=dest_idx)
-            st.session_state.dest_router = dest_sel
+            all_routers = sorted(list(manager.base_graph.nodes))
+            r_c1, r_c2 = st.columns(2)
+            with r_c1:
+                source_idx = (
+                    all_routers.index(st.session_state.source_router)
+                    if st.session_state.source_router in all_routers
+                    else 0
+                )
+                source_sel = st.selectbox("Source Router", options=all_routers, index=source_idx)
+                st.session_state.source_router = source_sel
 
-        st.write("")
-        b_c1, b_c2 = st.columns(2, gap="small")
-        with b_c1:
-            find_route_btn = st.button("🔍 Find Best Route", use_container_width=True, type="primary")
-        with b_c2:
-            send_packet_btn = st.button("🚀 Transmit Packet", use_container_width=True)
+            with r_c2:
+                dest_idx = (
+                    all_routers.index(st.session_state.dest_router)
+                    if st.session_state.dest_router in all_routers
+                    else len(all_routers) - 1
+                )
+                dest_sel = st.selectbox("Destination Router", options=all_routers, index=dest_idx)
+                st.session_state.dest_router = dest_sel
 
-        # Action: Find Best Route
-        if find_route_btn:
-            if source_sel == dest_sel:
-                st.warning("Source and Destination routers cannot be identical.")
-            elif not manager.is_node_active(source_sel):
-                st.error(f"Cannot calculate route: Source Router {source_sel} is OFFLINE.")
-            elif not manager.is_node_active(dest_sel):
-                st.error(f"Cannot calculate route: Destination Router {dest_sel} is OFFLINE.")
-            else:
-                active_g = manager.get_active_graph()
-                path, cost, hops = find_shortest_path(active_g, source_sel, dest_sel)
+            st.write("")
+            b_c1, b_c2 = st.columns(2, gap="small")
+            with b_c1:
+                find_route_btn = st.button("🔍 Find Best Route", use_container_width=True, type="primary")
+            with b_c2:
+                send_packet_btn = st.button("🚀 Transmit Packet", use_container_width=True)
 
-                if path is not None:
-                    st.session_state.current_route = path
-                    st.session_state.current_cost = cost
-                    st.session_state.route_hops = hops
-                    st.session_state.last_healing_event = None
-                    route_str = " → ".join(path)
-                    log_event(f"[ROUTE] Optimal path computed: {route_str} (Metric Cost: {cost})")
-                    st.success(f"Best Route found: **{route_str}** | Total Cost: **{cost}**")
-                    st.rerun()
+            # Action: Find Best Route
+            if find_route_btn:
+                if source_sel == dest_sel:
+                    st.warning("Source and Destination routers cannot be identical.")
+                elif not manager.is_node_active(source_sel):
+                    st.error(f"Cannot calculate route: Source Router {source_sel} is OFFLINE.")
+                elif not manager.is_node_active(dest_sel):
+                    st.error(f"Cannot calculate route: Destination Router {dest_sel} is OFFLINE.")
                 else:
-                    st.session_state.current_route = None
-                    st.session_state.current_cost = None
-                    st.session_state.route_hops = []
-                    log_event(f"[ROUTE] Routing failed: No reachable path between {source_sel} and {dest_sel}")
-                    st.error("No route exists between the selected routers.")
+                    active_g = manager.get_active_graph()
+                    path, cost, hops = find_shortest_path(active_g, source_sel, dest_sel)
+
+                    if path is not None:
+                        st.session_state.current_route = path
+                        st.session_state.current_cost = cost
+                        st.session_state.route_hops = hops
+                        st.session_state.last_healing_event = None
+                        route_str = " → ".join(path)
+                        log_event(f"[ROUTE] Optimal path computed: {route_str} (Metric Cost: {cost})")
+                        st.success(f"Best Route found: **{route_str}** | Total Cost: **{cost}**")
+                        st.rerun()
+                    else:
+                        st.session_state.current_route = None
+                        st.session_state.current_cost = None
+                        st.session_state.route_hops = []
+                        log_event(f"[ROUTE] Routing failed: No reachable path between {source_sel} and {dest_sel}")
+                        st.error("No route exists between the selected routers.")
+                        st.rerun()
+
+            # Action: Send Packet
+            if send_packet_btn:
+                if not st.session_state.current_route:
+                    st.warning("Please compute an active route first before transmitting packets.")
+                else:
+                    trans_result = packet_sim.transmit_packet(st.session_state.current_route, manager)
+                    st.session_state.packet_logs = trans_result["hop_logs"]
+
+                    for hop_msg in trans_result["hop_logs"]:
+                        log_event(f"[PACKET] {hop_msg}")
+
+                    if trans_result["success"]:
+                        st.toast("Packet successfully delivered to destination!", icon="✔")
+                    else:
+                        st.toast("Packet transmission failed: Packet dropped in transit!", icon="❌")
                     st.rerun()
 
-        # Action: Send Packet
-        if send_packet_btn:
-            if not st.session_state.current_route:
-                st.warning("Please compute an active route first before transmitting packets.")
-            else:
-                trans_result = packet_sim.transmit_packet(st.session_state.current_route, manager)
-                st.session_state.packet_logs = trans_result["hop_logs"]
+        # -----------------------------------------------------
+        # SUBTAB 2: Failure Injection Studio
+        # -----------------------------------------------------
+        with fail_subtabs[1]:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>"
+                "Simulate physical link severance or router hardware crashes to test self-healing.</div>",
+                unsafe_allow_html=True,
+            )
 
-                for hop_msg in trans_result["hop_logs"]:
-                    log_event(f"[PACKET] {hop_msg}")
+            fail_type = st.radio("Select Failure Domain", ["Sever Network Link", "Crash Router Node"], horizontal=True)
 
-                if trans_result["success"]:
-                    st.toast("Packet successfully delivered to destination!", icon="✔")
+            if fail_type == "Sever Network Link":
+                active_links = manager.get_active_links()
+                link_options = [f"{u} - {v}" for u, v in active_links]
+
+                if not link_options:
+                    st.info("All network links are currently severed.")
                 else:
-                    st.toast("Packet transmission failed: Packet dropped in transit!", icon="❌")
+                    selected_link_str = st.selectbox("Select Active Link to Sever", options=link_options)
+                    fail_link_btn = st.button("💥 Sever Link", use_container_width=True)
+
+                    if fail_link_btn and selected_link_str:
+                        u, v = selected_link_str.split(" - ")
+                        if manager.fail_link(u, v):
+                            st.session_state.monitoring_banner = f"Fault detected: Link {u} <-> {v} severed."
+                            log_event(f"[FAIL] Link {u}-{v} severed")
+                            log_event(f"[MONITOR] Failure detected: Link {u} <-> {v}")
+
+                            # Trigger Self-Healing
+                            if st.session_state.current_route:
+                                log_event("[HEAL] MeshGuard initiating autonomous reroute...")
+                                healing_res = SelfHealingEngine.trigger_healing(
+                                    manager=manager,
+                                    source=st.session_state.source_router,
+                                    destination=st.session_state.dest_router,
+                                    current_path=st.session_state.current_route,
+                                    failure_type="Link",
+                                    failed_item=f"{u}-{v}",
+                                )
+                                st.session_state.last_healing_event = healing_res
+                                st.session_state.last_recovery_time = healing_res["recovery_time"]
+
+                                if healing_res["status"] == "RECOVERED":
+                                    st.session_state.current_route = healing_res["recovered_path"]
+                                    st.session_state.current_cost = healing_res["recovered_cost"]
+                                    st.session_state.route_hops = healing_res["hops_detail"]
+                                    new_r_str = " → ".join(healing_res["recovered_path"])
+                                    log_event(f"[HEAL] Alternative route established: {new_r_str}")
+                                    log_event(f"[HEAL] Network recovered in {healing_res['recovery_time']:.3f}s")
+                                elif healing_res["status"] == "FAILED_NO_PATH":
+                                    st.session_state.current_route = None
+                                    st.session_state.current_cost = None
+                                    st.session_state.route_hops = []
+                                    log_event("[FAIL] Network could not recover: Partitioned graph.")
+                            st.rerun()
+
+            else:
+                active_routers = manager.get_active_nodes()
+                if not active_routers:
+                    st.info("All routers are currently down.")
+                else:
+                    selected_router = st.selectbox("Select Router to Crash", options=active_routers)
+                    fail_router_btn = st.button("🛑 Crash Router", use_container_width=True)
+
+                    if fail_router_btn and selected_router:
+                        if manager.fail_node(selected_router):
+                            st.session_state.monitoring_banner = f"Fault detected: Router {selected_router} offline."
+                            log_event(f"[FAIL] Router {selected_router} hardware crash")
+                            log_event(f"[FAIL] All links connected to Router {selected_router} disabled")
+
+                            # Trigger Self-Healing
+                            if st.session_state.current_route:
+                                log_event("[HEAL] MeshGuard initiating autonomous reroute...")
+                                healing_res = SelfHealingEngine.trigger_healing(
+                                    manager=manager,
+                                    source=st.session_state.source_router,
+                                    destination=st.session_state.dest_router,
+                                    current_path=st.session_state.current_route,
+                                    failure_type="Router",
+                                    failed_item=selected_router,
+                                )
+                                st.session_state.last_healing_event = healing_res
+                                st.session_state.last_recovery_time = healing_res["recovery_time"]
+
+                                if healing_res["status"] == "RECOVERED":
+                                    st.session_state.current_route = healing_res["recovered_path"]
+                                    st.session_state.current_cost = healing_res["recovered_cost"]
+                                    st.session_state.route_hops = healing_res["hops_detail"]
+                                    new_r_str = " → ".join(healing_res["recovered_path"])
+                                    log_event(f"[HEAL] Alternative route established: {new_r_str}")
+                                    log_event(f"[HEAL] Network recovered in {healing_res['recovery_time']:.3f}s")
+                                elif healing_res["status"] == "FAILED_NO_PATH":
+                                    st.session_state.current_route = None
+                                    st.session_state.current_cost = None
+                                    st.session_state.route_hops = []
+                                    log_event("[FAIL] Network could not recover: Partitioned graph.")
+                            st.rerun()
+
+        # -----------------------------------------------------
+        # SUBTAB 3: Recovery & Reset
+        # -----------------------------------------------------
+        with fail_subtabs[2]:
+            st.markdown(
+                "<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>"
+                "Re-enable failed links, power up crashed routers, or restore pristine default topology.</div>",
+                unsafe_allow_html=True,
+            )
+
+            r_subtab1, r_subtab2 = st.tabs(["Restore Link", "Restore Router"])
+
+            with r_subtab1:
+                failed_links = manager.get_failed_links()
+                if not failed_links:
+                    st.success("All links are operational.", icon="✔")
+                else:
+                    f_link_opts = [f"{u} - {v}" for u, v in failed_links]
+                    sel_f_link = st.selectbox("Failed Link to Restore", options=f_link_opts)
+                    rest_link_btn = st.button("🔄 Restore Selected Link", use_container_width=True)
+
+                    if rest_link_btn and sel_f_link:
+                        u, v = sel_f_link.split(" - ")
+                        if manager.restore_link(u, v):
+                            log_event(f"[RESTORE] Link {u}-{v} restored to ACTIVE")
+                            st.session_state.monitoring_banner = f"Link {u}-{v} restored."
+
+                            if manager.is_node_active(st.session_state.source_router) and manager.is_node_active(
+                                st.session_state.dest_router
+                            ):
+                                act_g = manager.get_active_graph()
+                                p, c, h = find_shortest_path(
+                                    act_g, st.session_state.source_router, st.session_state.dest_router
+                                )
+                                if p:
+                                    st.session_state.current_route = p
+                                    st.session_state.current_cost = c
+                                    st.session_state.route_hops = h
+                                    log_event(f"[ROUTE] Optimal route updated: {' → '.join(p)} (Cost: {c})")
+                            st.rerun()
+
+            with r_subtab2:
+                failed_routers = manager.get_failed_nodes()
+                if not failed_routers:
+                    st.success("All routers are online.", icon="✔")
+                else:
+                    sel_f_router = st.selectbox("Failed Router to Restore", options=failed_routers)
+                    rest_router_btn = st.button("🔄 Restore Selected Router", use_container_width=True)
+
+                    if rest_router_btn and sel_f_router:
+                        if manager.restore_node(sel_f_router):
+                            log_event(f"[RESTORE] Router {sel_f_router} powered up and ONLINE")
+                            st.session_state.monitoring_banner = f"Router {sel_f_router} restored."
+
+                            if manager.is_node_active(st.session_state.source_router) and manager.is_node_active(
+                                st.session_state.dest_router
+                            ):
+                                act_g = manager.get_active_graph()
+                                p, c, h = find_shortest_path(
+                                    act_g, st.session_state.source_router, st.session_state.dest_router
+                                )
+                                if p:
+                                    st.session_state.current_route = p
+                                    st.session_state.current_cost = c
+                                    st.session_state.route_hops = h
+                                    log_event(f"[ROUTE] Optimal route updated: {' → '.join(p)} (Cost: {c})")
+                            st.rerun()
+
+            st.write("")
+            st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:12px 0;'>", unsafe_allow_html=True)
+            reset_network_btn = st.button("♻ Reset Entire Network", use_container_width=True)
+            if reset_network_btn:
+                manager.reset_network()
+                packet_sim.reset_metrics()
+                st.session_state.security_monitor = SecurityMonitor(manager, packet_sim, event_sink=log_event)
+                st.session_state.current_route = None
+                st.session_state.current_cost = None
+                st.session_state.route_hops = []
+                st.session_state.last_healing_event = None
+                st.session_state.last_recovery_time = None
+                st.session_state.packet_logs = []
+                st.session_state.monitoring_banner = "Network reset to default state. All routers and links active."
+                log_event("[RESET] Network topology reset to default state")
                 st.rerun()
 
-    # -----------------------------------------------------
-    # TAB 2: Failure Injection Studio
-    # -----------------------------------------------------
-    with main_tabs[1]:
-        st.markdown("<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>Simulate physical link severance or router hardware crashes to test self-healing.</div>", unsafe_allow_html=True)
-
-        fail_type = st.radio("Select Failure Domain", ["Sever Network Link", "Crash Router Node"], horizontal=True)
-
-        if fail_type == "Sever Network Link":
-            active_links = manager.get_active_links()
-            link_options = [f"{u} - {v}" for u, v in active_links]
-
-            if not link_options:
-                st.info("All network links are currently severed.")
-            else:
-                selected_link_str = st.selectbox("Select Active Link to Sever", options=link_options)
-                fail_link_btn = st.button("💥 Sever Link", use_container_width=True)
-
-                if fail_link_btn and selected_link_str:
-                    u, v = selected_link_str.split(" - ")
-                    if manager.fail_link(u, v):
-                        st.session_state.monitoring_banner = f"Fault detected: Link {u} <-> {v} severed."
-                        log_event(f"[FAIL] Link {u}-{v} severed")
-                        log_event(f"[MONITOR] Failure detected: Link {u} <-> {v}")
-
-                        # Trigger Self-Healing
-                        if st.session_state.current_route:
-                            log_event("[HEAL] MeshGuard initiating autonomous reroute...")
-                            healing_res = SelfHealingEngine.trigger_healing(
-                                manager=manager,
-                                source=st.session_state.source_router,
-                                destination=st.session_state.dest_router,
-                                current_path=st.session_state.current_route,
-                                failure_type="Link",
-                                failed_item=f"{u}-{v}"
-                            )
-                            st.session_state.last_healing_event = healing_res
-                            st.session_state.last_recovery_time = healing_res["recovery_time"]
-
-                            if healing_res["status"] == "RECOVERED":
-                                st.session_state.current_route = healing_res["recovered_path"]
-                                st.session_state.current_cost = healing_res["recovered_cost"]
-                                st.session_state.route_hops = healing_res["hops_detail"]
-                                new_r_str = " → ".join(healing_res["recovered_path"])
-                                log_event(f"[HEAL] Alternative route established: {new_r_str}")
-                                log_event(f"[HEAL] Network recovered in {healing_res['recovery_time']:.3f}s")
-                            elif healing_res["status"] == "FAILED_NO_PATH":
-                                st.session_state.current_route = None
-                                st.session_state.current_cost = None
-                                st.session_state.route_hops = []
-                                log_event("[FAIL] Network could not recover: Partitioned graph.")
-                        st.rerun()
-
+    with fail_col_right:
+        st.markdown('<div class="panel-title">📋 Route Breakdown & Hop Telemetry</div>', unsafe_allow_html=True)
+        if st.session_state.route_hops:
+            st.dataframe(
+                st.session_state.route_hops,
+                column_config={
+                    "hop": "Hop #",
+                    "from": "From Router",
+                    "to": "To Router",
+                    "link": "Link Adjacency",
+                    "cost": "Metric Cost",
+                    "cumulative_cost": "Total Path Cost",
+                },
+                hide_index=True,
+                use_container_width=True,
+            )
         else:
-            active_routers = manager.get_active_nodes()
-            if not active_routers:
-                st.info("All routers are currently down.")
-            else:
-                selected_router = st.selectbox("Select Router to Crash", options=active_routers)
-                fail_router_btn = st.button("🛑 Crash Router", use_container_width=True)
+            st.info("No active route computed. Use 'Find Best Route' to display telemetry.")
 
-                if fail_router_btn and selected_router:
-                    if manager.fail_node(selected_router):
-                        st.session_state.monitoring_banner = f"Fault detected: Router {selected_router} offline."
-                        log_event(f"[FAIL] Router {selected_router} hardware crash")
-                        log_event(f"[FAIL] All links connected to Router {selected_router} disabled")
+        if st.session_state.packet_logs:
+            st.markdown(
+                "<h5 style='color:#e2e8f0; margin-top:16px; margin-bottom:8px;'>📦 Virtual Packet Telemetry Flow</h5>",
+                unsafe_allow_html=True,
+            )
+            pkt_box_html = ""
+            for plog in st.session_state.packet_logs:
+                if "[OK]" in plog:
+                    pkt_box_html += f"<div style='color:#10b981; font-weight:600;'>{plog}</div>"
+                elif "[FAIL]" in plog or "dropped" in plog:
+                    pkt_box_html += f"<div style='color:#f43f5e; font-weight:600;'>{plog}</div>"
+                else:
+                    pkt_box_html += f"<div style='color:#38bdf8;'>{plog}</div>"
+            st.markdown(
+                f"<div style='background:#080c14; border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px 16px; font-family:monospace; font-size:0.82rem; line-height:1.5;'>{pkt_box_html}</div>",
+                unsafe_allow_html=True,
+            )
 
-                        # Trigger Self-Healing
-                        if st.session_state.current_route:
-                            log_event("[HEAL] MeshGuard initiating autonomous reroute...")
-                            healing_res = SelfHealingEngine.trigger_healing(
-                                manager=manager,
-                                source=st.session_state.source_router,
-                                destination=st.session_state.dest_router,
-                                current_path=st.session_state.current_route,
-                                failure_type="Router",
-                                failed_item=selected_router
-                            )
-                            st.session_state.last_healing_event = healing_res
-                            st.session_state.last_recovery_time = healing_res["recovery_time"]
 
-                            if healing_res["status"] == "RECOVERED":
-                                st.session_state.current_route = healing_res["recovered_path"]
-                                st.session_state.current_cost = healing_res["recovered_cost"]
-                                st.session_state.route_hops = healing_res["hops_detail"]
-                                new_r_str = " → ".join(healing_res["recovered_path"])
-                                log_event(f"[HEAL] Alternative route established: {new_r_str}")
-                                log_event(f"[HEAL] Network recovered in {healing_res['recovery_time']:.3f}s")
-                            elif healing_res["status"] == "FAILED_NO_PATH":
-                                st.session_state.current_route = None
-                                st.session_state.current_cost = None
-                                st.session_state.route_hops = []
-                                log_event("[FAIL] Network could not recover: Partitioned graph.")
-                        st.rerun()
+# =========================================================
+# TAB 2: Security Testing — Simulate a Malicious Client
+# Demonstrates: Malicious Client Simulation → Route Validation → Invalid Route Rejection → Safe Route Selection → Recovery
+# =========================================================
+with test_tab2:
+    render_security_monitor(security_monitor, viz_mode)
 
-    # -----------------------------------------------------
-    # TAB 3: Recovery & Reset
-    # -----------------------------------------------------
-    with main_tabs[2]:
-        st.markdown("<div style='font-size:0.85rem; color:#94a3b8; margin-bottom:14px;'>Re-enable failed links, power up crashed routers, or restore pristine default topology.</div>", unsafe_allow_html=True)
-
-        r_subtab1, r_subtab2 = st.tabs(["Restore Link", "Restore Router"])
-
-        with r_subtab1:
-            failed_links = manager.get_failed_links()
-            if not failed_links:
-                st.success("All links are operational.", icon="✔")
-            else:
-                f_link_opts = [f"{u} - {v}" for u, v in failed_links]
-                sel_f_link = st.selectbox("Failed Link to Restore", options=f_link_opts)
-                rest_link_btn = st.button("🔄 Restore Selected Link", use_container_width=True)
-
-                if rest_link_btn and sel_f_link:
-                    u, v = sel_f_link.split(" - ")
-                    if manager.restore_link(u, v):
-                        log_event(f"[RESTORE] Link {u}-{v} restored to ACTIVE")
-                        st.session_state.monitoring_banner = f"Link {u}-{v} restored."
-
-                        if manager.is_node_active(st.session_state.source_router) and manager.is_node_active(st.session_state.dest_router):
-                            act_g = manager.get_active_graph()
-                            p, c, h = find_shortest_path(act_g, st.session_state.source_router, st.session_state.dest_router)
-                            if p:
-                                st.session_state.current_route = p
-                                st.session_state.current_cost = c
-                                st.session_state.route_hops = h
-                                log_event(f"[ROUTE] Optimal route updated: {' → '.join(p)} (Cost: {c})")
-                        st.rerun()
-
-        with r_subtab2:
-            failed_routers = manager.get_failed_nodes()
-            if not failed_routers:
-                st.success("All routers are online.", icon="✔")
-            else:
-                sel_f_router = st.selectbox("Failed Router to Restore", options=failed_routers)
-                rest_router_btn = st.button("🔄 Restore Selected Router", use_container_width=True)
-
-                if rest_router_btn and sel_f_router:
-                    if manager.restore_node(sel_f_router):
-                        log_event(f"[RESTORE] Router {sel_f_router} powered up and ONLINE")
-                        st.session_state.monitoring_banner = f"Router {sel_f_router} restored."
-
-                        if manager.is_node_active(st.session_state.source_router) and manager.is_node_active(st.session_state.dest_router):
-                            act_g = manager.get_active_graph()
-                            p, c, h = find_shortest_path(act_g, st.session_state.source_router, st.session_state.dest_router)
-                            if p:
-                                st.session_state.current_route = p
-                                st.session_state.current_cost = c
-                                st.session_state.route_hops = h
-                                log_event(f"[ROUTE] Optimal route updated: {' → '.join(p)} (Cost: {c})")
-                        st.rerun()
-
-        st.write("")
-        st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:12px 0;'>", unsafe_allow_html=True)
-        reset_network_btn = st.button("♻ Reset Entire Network to Default", use_container_width=True)
-        if reset_network_btn:
-            manager.reset_network()
-            packet_sim.reset_metrics()
-            st.session_state.current_route = None
-            st.session_state.current_cost = None
-            st.session_state.route_hops = []
-            st.session_state.last_healing_event = None
-            st.session_state.last_recovery_time = None
-            st.session_state.packet_logs = []
-            st.session_state.monitoring_banner = "Network reset to default state. All routers and links active."
-            log_event("[RESET] Network topology reset to default state")
-            st.rerun()
 
 # ---------------------------------------------------------
-# SECTION 4: Live Event Logs Terminal & Hop Breakdown Table
+# Section 8: Unified & Filterable Event Logs
 # ---------------------------------------------------------
-st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:28px 0 20px 0;'>", unsafe_allow_html=True)
-bot_c1, bot_c2 = st.columns([1.35, 1.0], gap="large")
+st.write("")
+st.markdown("<hr style='border-color:rgba(30,44,64,0.7); margin:24px 0 18px 0;'>", unsafe_allow_html=True)
+section_heading(
+    "logs-workspace",
+    "03",
+    "Network Audit & Event Logs",
+    "Real-time synchronized event logs detailing routing calculations, equipment outages, security rejections, and autonomous recovery."
+)
 
-with bot_c1:
-    st.markdown("<h4 style='color:#f8fafc; margin-bottom:10px;'>📜 Live NOC Audit Console</h4>", unsafe_allow_html=True)
-    visible_logs = st.session_state.event_logs[-30:]
+log_ctrl1, log_ctrl2 = st.columns([1.2, 2.0], gap="medium")
+with log_ctrl1:
+    severity_filter = st.selectbox(
+        "Filter by Severity",
+        ["All Severities", "SECURITY ALERT", "ERROR", "WARNING", "INFO"],
+        index=0,
+    )
+with log_ctrl2:
+    keyword_filter = st.text_input(
+        "Search Audit Logs",
+        placeholder="Filter by keyword (e.g., Client 2, Link D-F, Dijkstra)...",
+    )
 
+raw_logs = list(reversed(st.session_state.event_logs[-100:]))
+parsed_logs = [parse_log_entry(entry) for entry in raw_logs]
+
+# Apply Filters
+filtered_logs = []
+for item in parsed_logs:
+    if severity_filter != "All Severities" and item["severity"] != severity_filter:
+        continue
+    if keyword_filter and keyword_filter.lower() not in item["raw"].lower():
+        continue
+    filtered_logs.append(item)
+
+if not st.session_state.event_logs:
+    st.info("No event logs recorded yet.")
+elif not filtered_logs:
+    st.warning("No log events match the selected filter criteria.")
+else:
+    # Display formatted table
+    table_data = [
+        {
+            "Timestamp": item["timestamp"],
+            "Severity": item["severity"],
+            "Affected Component": item["affected"],
+            "Event Description": item["event"],
+            "Action Taken": item["action"],
+        }
+        for item in filtered_logs[:40]
+    ]
+    st.dataframe(
+        table_data,
+        column_config={
+            "Timestamp": st.column_config.TextColumn("Timestamp", width="small"),
+            "Severity": st.column_config.TextColumn("Severity", width="medium"),
+            "Affected Component": st.column_config.TextColumn("Affected Entity", width="medium"),
+            "Event Description": st.column_config.TextColumn("Event Description", width="large"),
+            "Action Taken": st.column_config.TextColumn("Action Taken", width="medium"),
+        },
+        hide_index=True,
+        use_container_width=True,
+    )
+
+# Optional Terminal View Expander
+with st.expander("🖥️ Live NOC Telemetry Terminal Console (Raw Output)", expanded=False):
+    visible_logs = st.session_state.event_logs[-35:]
     formatted_lines = []
     for log_l in visible_logs:
         if "[FAIL]" in log_l:
             formatted_lines.append(f"<span style='color:#f43f5e;'>{log_l}</span>")
         elif "[HEAL]" in log_l:
             formatted_lines.append(f"<span style='color:#10b981; font-weight:600;'>{log_l}</span>")
+        elif "[SECURITY]" in log_l:
+            formatted_lines.append(f"<span style='color:#fb7185; font-weight:600;'>{log_l}</span>")
         elif "[ROUTE]" in log_l:
             formatted_lines.append(f"<span style='color:#38bdf8;'>{log_l}</span>")
         elif "[RESTORE]" in log_l:
@@ -843,21 +954,12 @@ with bot_c1:
     </div>
     """, unsafe_allow_html=True)
 
-with bot_c2:
-    st.markdown("<h4 style='color:#f8fafc; margin-bottom:10px;'>📊 Hop-by-Hop Route Breakdown</h4>", unsafe_allow_html=True)
-    if st.session_state.route_hops:
-        st.dataframe(
-            st.session_state.route_hops,
-            column_config={
-                "hop": "Hop #",
-                "from": "From Router",
-                "to": "To Router",
-                "link": "Link Adjacency",
-                "cost": "Metric Cost",
-                "cumulative_cost": "Total Path Cost"
-            },
-            hide_index=True,
-            use_container_width=True
-        )
-    else:
-        st.info("No active route computed. Use 'Find Best Route' to display telemetry.")
+# ---------------------------------------------------------
+# Footer
+# ---------------------------------------------------------
+st.markdown("""
+<footer class="workspace-footer">
+    <span>MESHGUARD · SECURE SELF-HEALING NETWORK SIMULATOR</span>
+    <span>Autonomous Failure Recovery & Route Security · College Project Demonstration</span>
+</footer>
+""", unsafe_allow_html=True)

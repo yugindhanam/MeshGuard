@@ -5,7 +5,7 @@ and records recovery metrics including recovery time and event details.
 """
 
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 from network.manager import NetworkManager
 from routing.dijkstra import find_shortest_path
 from monitoring.failure_detector import FailureDetector
@@ -23,7 +23,9 @@ class SelfHealingEngine:
         destination: str,
         current_path: Optional[List[str]],
         failure_type: str,  # 'ROUTER' or 'LINK'
-        failed_item: Any    # 'D' or ('B', 'D')
+        failed_item: Any,    # 'D' or ('B', 'D')
+        allowed_nodes: Optional[Set[str]] = None,
+        validation_reasons: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Executes the self-healing algorithm:
@@ -40,6 +42,10 @@ class SelfHealingEngine:
         is_affected, reasons = FailureDetector.is_path_compromised(
             current_path, failed_nodes, failed_links
         )
+        # Security and disconnected clients share the existing recovery pipeline.
+        if validation_reasons or not current_path:
+            is_affected = True
+            reasons.extend(validation_reasons or ["No route configured"])
 
         result: Dict[str, Any] = {
             "failure_type": failure_type,
@@ -68,6 +74,8 @@ class SelfHealingEngine:
 
         # Route IS affected -> Recalculate using active subgraph
         active_graph = manager.get_active_graph()
+        if allowed_nodes is not None:
+            active_graph = active_graph.subgraph(allowed_nodes)
         new_path, new_cost, hops = find_shortest_path(active_graph, source, destination)
 
         elapsed = time.perf_counter() - start_time

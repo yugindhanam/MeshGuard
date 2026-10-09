@@ -72,7 +72,8 @@ def create_base_graph(topology_data: Dict[str, Any] = None) -> nx.Graph:
             router["id"],
             label=router.get("label", f"Router {router['id']}"),
             x=router.get("x", 0),
-            y=router.get("y", 0)
+            y=router.get("y", 0),
+            trusted=router.get("trusted", True)
         )
 
     for link in topology_data.get("links", []):

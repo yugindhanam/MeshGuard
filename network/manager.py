@@ -125,12 +125,7 @@ class NetworkManager:
         # Add only active nodes with attributes
         for node in self.base_graph.nodes:
             if self.is_node_active(node):
-                active_G.add_node(
-                    node,
-                    label=self.base_graph.nodes[node].get("label", f"Router {node}"),
-                    x=self.base_graph.nodes[node].get("x", 0),
-                    y=self.base_graph.nodes[node].get("y", 0)
-                )
+                active_G.add_node(node, **self.base_graph.nodes[node])
 
         # Add only active edges where both incident nodes are active
         for u, v, data in self.base_graph.edges(data=True):

@@ -22,11 +22,11 @@ def find_shortest_path(
         cost: Total path cost (float('inf') if no route exists).
         hops_detail: List of hop descriptions with individual and cumulative costs.
     """
-    if source == destination:
-        return [source], 0.0, []
-
     if source not in graph or destination not in graph:
         return None, float("inf"), []
+
+    if source == destination:
+        return [source], 0.0, []
 
     try:
         # Use NetworkX Dijkstra implementation
